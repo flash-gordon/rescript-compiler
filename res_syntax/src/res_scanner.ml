@@ -167,6 +167,11 @@ let digitValue ch =
 
 (* scanning helpers *)
 
+let isOpChar = function
+  | '$' | '&' | '*' | '+' | '-' | '/' | '<' | '=' | '>' | '@' | '^' | '|' ->
+    true
+  | _ -> false
+
 let scanIdentifier scanner =
   let startOff = scanner.offset in
   let rec skipGoodChars scanner =
@@ -184,6 +189,10 @@ let scanIdentifier scanner =
     next scanner;
     (* TODO: this isn't great *)
     Token.lookupKeyword "list{")
+  else if (str = "let" || str = "and") && isOpChar scanner.ch then (
+    let op = str ^ String.make 1 scanner.ch in
+    next scanner;
+    if str = "let" then Token.Letop op else Token.Andop op)
   else Token.lookupKeyword str
 
 let scanDigits scanner ~base =

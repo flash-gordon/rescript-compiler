@@ -1077,6 +1077,46 @@ and printValueBindings ~state ~recFlag (vbs : Parsetree.value_binding list)
     ~print:(printValueBinding ~state ~recFlag)
     cmtTbl
 
+and printLetop ~state (letops : Parsetree.binding_op list) cmtTbl =
+  let printBinding ~state opb cmtTbl _ =
+    let body =
+      match opb.Parsetree.pbop_pat.ppat_desc with
+      | Ppat_constraint (_pat, typ) ->
+        let printedTypeExpr = printTypExpr ~state typ cmtTbl in
+        let printedExpr =
+          let doc = printExpressionWithComments ~state opb.pbop_exp cmtTbl in
+          match Parens.expr opb.pbop_exp with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc opb.pbop_exp braces
+          | Nothing -> doc
+        in
+        Doc.concat
+          [Doc.text " : "; printedTypeExpr; Doc.text " = "; printedExpr]
+      | _ ->
+        let printedExpr =
+          let doc = printExpressionWithComments ~state opb.pbop_exp cmtTbl in
+          match Parens.expr opb.pbop_exp with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc opb.pbop_exp braces
+          | Nothing -> doc
+        in
+        Doc.concat [Doc.text " = "; printedExpr]
+    in
+    let prefix = Doc.concat [Doc.text opb.pbop_op.txt; Doc.text " "] in
+    Doc.breakableGroup ~forceBreak:true
+      (Doc.concat
+         [
+           prefix;
+           printComments
+             (printPattern ~state opb.pbop_pat cmtTbl)
+             cmtTbl opb.pbop_pat.ppat_loc;
+           body;
+         ])
+  in
+  printListi
+    ~getLoc:(fun vb -> vb.Parsetree.pbop_loc)
+    ~nodes:letops ~print:(printBinding ~state) cmtTbl
+
 and printValueDescription ~state valueDescription cmtTbl =
   let isExternal =
     match valueDescription.pval_prim with
@@ -5012,6 +5052,22 @@ and printExpressionBlock ~state ~braces expr cmtTbl =
       | Pexp_construct ({txt = Longident.Lident "()"}, _) ->
         List.rev ((loc, letDoc) :: acc)
       | _ -> collectRows ((loc, letDoc) :: acc) expr2)
+    | Pexp_letop (let_, ands, body) ->
+      let loc =
+        let loc =
+          match (let_ :: ands, List.rev (let_ :: ands)) with
+          | letop :: _, lastLetop :: _ ->
+            {letop.pbop_loc with loc_end = lastLetop.pbop_loc.loc_end}
+          | _ -> Location.none
+        in
+        match getFirstLeadingComment cmtTbl loc with
+        | None -> loc
+        | Some comment ->
+          let cmtLoc = Comment.loc comment in
+          {cmtLoc with loc_end = loc.loc_end}
+      in
+      let letDoc = printLetop ~state (let_ :: ands) cmtTbl in
+      collectRows ((loc, letDoc) :: acc) body
     | _ ->
       let exprDoc =
         let doc = printExpression ~state expr cmtTbl in

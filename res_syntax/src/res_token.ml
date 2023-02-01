@@ -96,6 +96,8 @@ type t =
   | Try
   | DocComment of Location.t * string
   | ModuleComment of Location.t * string
+  | Letop of string
+  | Andop of string
 
 let precedence = function
   | HashEqual | ColonEqual -> 1
@@ -207,6 +209,8 @@ let toString = function
   | Try -> "try"
   | DocComment (_loc, s) -> "DocComment " ^ s
   | ModuleComment (_loc, s) -> "ModuleComment " ^ s
+  | Letop op -> op
+  | Andop op -> op
 
 let keywordTable = function
   | "and" -> And

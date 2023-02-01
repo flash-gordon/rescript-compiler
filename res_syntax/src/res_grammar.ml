@@ -59,6 +59,7 @@ type t =
   | Pattern
   | AttributePayload
   | TagNames
+  | Letop
 
 let toString = function
   | OpenDescription -> "an open description"
@@ -120,6 +121,7 @@ let toString = function
   | ExprFor -> "a for expression"
   | AttributePayload -> "an attribute payload"
   | TagNames -> "tag names"
+  | Letop -> "let op"
 
 let isSignatureItemStart = function
   | Token.At | Let | Typ | External | Exception | Open | Include | Module | AtAt
@@ -323,3 +325,7 @@ let isListTerminator grammar token =
 
 let isPartOfList grammar token =
   isListElement grammar token || isListTerminator grammar token
+
+let isLetopStart = function
+  | Token.Letop _ | Token.Andop _ -> true
+  | _ -> false

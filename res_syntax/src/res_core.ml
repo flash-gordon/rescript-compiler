@@ -3174,6 +3174,9 @@ and parseExprBlockItem p =
     in
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.let_ ~loc recFlag letBindings next
+  | Letop op ->
+    let loc = mkLoc startPos p.prevEndPos in
+    parseLetop (Location.mkloc op loc) p
   | _ ->
     let e1 =
       let expr = parseExpr p in
@@ -6456,6 +6459,77 @@ and parseExtension ?(moduleLanguage = false) p =
   let attrId = parseAttributeId ~startPos p in
   let payload = parsePayload p in
   (attrId, payload)
+
+and parseLetopBody ~startPos op p =
+  Parser.beginRegion p;
+  Parser.leaveBreadcrumb p Grammar.Letop;
+  let pat, exp =
+    Parser.leaveBreadcrumb p Grammar.Pattern;
+    let pat = parsePattern p in
+    Parser.eatBreadcrumb p;
+    match p.Parser.token with
+    | Colon -> (
+      Parser.next p;
+      match p.token with
+      | Typ ->
+        (* locally abstract types *)
+        Parser.next p;
+        let newtypes = parseLidentList p in
+        Parser.expect Dot p;
+        let typ = parseTypExpr p in
+        Parser.expect Equal p;
+        let expr = parseExpr p in
+        let loc = mkLoc startPos p.prevEndPos in
+        let exp, poly = wrapTypeAnnotation ~loc newtypes typ expr in
+        let pat = Ast_helper.Pat.constraint_ ~loc pat poly in
+        (pat, exp)
+      | _ ->
+        let polyType = parsePolyTypeExpr p in
+        let loc =
+          {pat.ppat_loc with loc_end = polyType.Parsetree.ptyp_loc.loc_end}
+        in
+        let pat = Ast_helper.Pat.constraint_ ~loc pat polyType in
+        Parser.expect Token.Equal p;
+        let exp = parseExpr p in
+        let exp = overParseConstrainedOrCoercedOrArrowExpression p exp in
+        (pat, exp))
+    | _ ->
+      Parser.expect Token.Equal p;
+      let exp =
+        overParseConstrainedOrCoercedOrArrowExpression p (parseExpr p)
+      in
+      (pat, exp)
+  in
+  let loc = mkLoc startPos p.prevEndPos in
+  let bop = Ast_helper.Exp.binding_op op pat exp loc in
+  Parser.eatBreadcrumb p;
+  Parser.endRegion p;
+  bop
+
+and parseLetop op p =
+  let startPos = p.Parser.startPos in
+  Parser.beginRegion p;
+  Parser.next p;
+
+  let letop = parseLetopBody ~startPos op p in
+
+  let rec loop p ands =
+    let startPos = p.Parser.startPos in
+    match p.Parser.token with
+    | Andop op ->
+      Parser.next p;
+      let loc = mkLoc startPos p.prevEndPos in
+      let op = Location.mkloc op loc in
+      let and_ = parseLetopBody ~startPos op p in
+      loop p (and_ :: ands)
+    | _ -> List.rev ands
+  in
+  let ands = loop p [] in
+  let loc = mkLoc startPos p.prevEndPos in
+  parseNewlineOrSemicolonExprBlock p;
+  let blockExpr = parseExprBlock p in
+  Parser.endRegion p;
+  Ast_helper.Exp.letop ~loc letop ands blockExpr
 
 (* module signature on the file level *)
 let parseSpecification p : Parsetree.signature =
