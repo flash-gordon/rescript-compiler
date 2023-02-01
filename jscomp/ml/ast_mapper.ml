@@ -28,6 +28,7 @@ open Location
 type mapper = {
   attribute: mapper -> attribute -> attribute;
   attributes: mapper -> attribute list -> attribute list;
+  binding_op: mapper -> binding_op -> binding_op;
   case: mapper -> case -> case;
   cases: mapper -> case list -> case list;
   class_expr: mapper -> class_expr -> class_expr;
@@ -394,8 +395,19 @@ module E = struct
     | Pexp_pack me -> pack ~loc ~attrs (sub.module_expr sub me)
     | Pexp_open (ovf, lid, e) ->
         open_ ~loc ~attrs ovf (map_loc sub lid) (sub.expr sub e)
+    | Pexp_letop (let_, ands, body) ->
+      letop ~loc ~attrs (sub.binding_op sub let_)
+        (List.map (sub.binding_op sub) ands) (sub.expr sub body)
     | Pexp_extension x -> extension ~loc ~attrs (sub.extension sub x)
     | Pexp_unreachable -> unreachable ~loc ~attrs ()
+
+  let map_binding_op sub {pbop_op; pbop_pat; pbop_exp; pbop_loc} =
+    let open Exp in
+    let op = map_loc sub pbop_op in
+    let pat = sub.pat sub pbop_pat in
+    let exp = sub.expr sub pbop_exp in
+    let loc = sub.location sub pbop_loc in
+    binding_op op pat exp loc
 end
 
 module P = struct
@@ -535,6 +547,7 @@ let default_mapper =
 
     pat = P.map;
     expr = E.map;
+    binding_op = E.map_binding_op;
 
     module_declaration =
       (fun this {pmd_name; pmd_type; pmd_attributes; pmd_loc} ->

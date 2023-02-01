@@ -47,6 +47,8 @@ type token =
   | INFIXOP3 of (string)
   | INFIXOP4 of (string)
   | DOTOP of (string)
+  | LETOP of (string)
+  | ANDOP of (string)
   | INHERIT
   | INITIALIZER
   | INT of (string * char option)

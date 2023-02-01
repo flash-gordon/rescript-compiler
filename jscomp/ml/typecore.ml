@@ -75,6 +75,10 @@ type error =
   | Empty_record_literal
   | Uncurried_arity_mismatch of type_expr * int * int
   | Field_not_optional of string * type_expr
+  | Letop_type_clash of string * (type_expr * type_expr) list
+  | Andop_type_clash of string * (type_expr * type_expr) list
+  | Bindings_type_clash of (type_expr * type_expr) list
+
 exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error
 
@@ -168,12 +172,17 @@ let iter_expression f e =
     | Pexp_override sel -> List.iter (fun (_, e) -> expr e) sel
     | Pexp_letmodule (_, me, e) -> expr e; module_expr me
     | Pexp_object _ -> assert false
+    | Pexp_letop (let_, ands, body) ->
+      binding_op let_; List.iter binding_op ands; expr body
     | Pexp_pack me -> module_expr me
     | Pexp_unreachable -> ()
 
   and case {pc_lhs = _; pc_guard; pc_rhs} =
     may expr pc_guard;
     expr pc_rhs
+
+  and binding_op { pbop_exp; _ } =
+    expr pbop_exp
 
   and binding x =
     expr x.pvb_expr
@@ -219,6 +228,11 @@ let all_idents_cases el =
   let f = function
     | {pexp_desc=Pexp_ident { txt = Longident.Lident id; _ }; _} ->
         Hashtbl.replace idents id ()
+    | {pexp_desc=Pexp_letop (let_, ands, _); _ } ->
+      Hashtbl.replace idents let_.pbop_op.txt ();
+      List.iter
+        (fun { pbop_op; _ } -> Hashtbl.replace idents pbop_op.txt ())
+        ands
     | _ -> ()
   in
   List.iter
@@ -1813,9 +1827,13 @@ let id_of_pattern : Typedtree.pattern -> Ident.t option = fun pat ->
 let rec name_pattern default = function
     [] -> Ident.create default
   | {c_lhs=p; _} :: rem ->
-    match id_of_pattern p with 
-    | None -> name_pattern default rem
-    | Some id -> id    
+    match p.pat_desc with
+      Tpat_var (id, _) -> id
+    | Tpat_alias(_, id, _) -> id
+    | _ ->
+      match id_of_pattern p with
+      | None -> name_pattern default rem
+      | Some id -> id
 
 (* Typing of expressions *)
 
@@ -1895,41 +1913,13 @@ and type_expect_ ?in_function ?(recarg=Rejected) env sexp ty_expected =
   in
   match sexp.pexp_desc with
   | Pexp_ident lid ->
-      begin
-        let (path, desc) = Typetexp.find_value env lid.loc lid.txt in
-        if !Clflags.annotations then begin
-          let dloc = desc.Types.val_loc in
-          let annot =
-            if dloc.Location.loc_ghost then Annot.Iref_external
-            else Annot.Iref_internal dloc
-          in
-          let name = Path.name ~paren:Oprint.parenthesized_ident path in
-          Stypes.record (Stypes.An_ident (loc, name, annot))
-        end;
-        let is_recarg =
-          match (repr desc.val_type).desc with
-          | Tconstr(p, _, _) -> Path.is_constructor_typath p
-          | _ -> false
-        in
-
-        begin match is_recarg, recarg, (repr desc.val_type).desc with
-        | _, Allowed, _
-        | true, Required, _
-        | false, Rejected, _
-          -> ()
-        | true, Rejected, _
-        | false, Required, (Tvar _ | Tconstr _) ->
-            raise (Error (loc, env, Inlined_record_escape))
-        | false, Required, _  ->
-            () (* will fail later *)
-        end;
-        rue {
-          exp_desc = Texp_ident(path, lid, desc);
-          exp_loc = loc; exp_extra = [];
-          exp_type = instance env desc.val_type;
-          exp_attributes = sexp.pexp_attributes;
-          exp_env = env }
-      end
+      let path, desc = type_ident env ~recarg lid in
+      let exp_desc = Texp_ident(path, lid, desc)in
+      rue {
+        exp_desc; exp_loc = loc; exp_extra = [];
+        exp_type = instance env desc.val_type;
+        exp_attributes = sexp.pexp_attributes;
+        exp_env = env }
   | Pexp_constant cst ->
       let cst = constant_or_raise env loc cst in
       rue {
@@ -2744,6 +2734,69 @@ and type_expect_ ?in_function ?(recarg=Rejected) env sexp ty_expected =
                       exp.exp_extra;
       }
 
+  | Pexp_letop (slet, sands, sbody) ->
+    let rec loop spat_acc ty_acc sands =
+      match sands with
+      | [] -> spat_acc, ty_acc
+      | { pbop_pat = spat; _} :: rest ->
+          let ty = newvar () in
+          let loc = { slet.pbop_op.loc with Location.loc_ghost = true } in
+          let spat_acc = Ast_helper.Pat.tuple ~loc [spat_acc; spat] in
+          let ty_acc = newty (Ttuple [ty_acc; ty]) in
+          loop spat_acc ty_acc rest
+    in
+    begin_def ();
+    let let_loc = slet.pbop_op.loc in
+    let op_path, op_desc = type_binding_op_ident env slet.pbop_op in
+    let op_type = instance env op_desc.val_type in
+    let spat_params, ty_params = loop slet.pbop_pat (newvar ()) sands in
+    let ty_func_result = newvar () in
+    let ty_func = newty (Tarrow(Nolabel, ty_params, ty_func_result, Cok)) in
+    let ty_result = newvar () in
+    let ty_andops = newvar () in
+    let ty_op =
+      newty (Tarrow(Nolabel, ty_andops,
+        newty (Tarrow(Nolabel, ty_func, ty_result, Cok)), Cok))
+    in
+    begin try
+      unify env op_type ty_op
+    with Unify trace ->
+      raise(Error(let_loc, env, Letop_type_clash (slet.pbop_op.txt, trace)))
+    end;
+    end_def ();
+    generalize_structure ty_andops;
+    generalize_structure ty_params;
+    generalize_structure ty_func_result;
+    generalize_structure ty_result;
+    let exp, ands = type_andops env slet.pbop_exp sands ty_andops in
+    let scase = Ast_helper.Exp.case spat_params sbody in
+    let cases, partial =
+      type_cases env ty_params ty_func_result true loc [scase]
+    in
+    let body =
+      match cases with
+      | [case] -> case
+      | _ -> assert false
+    in
+    let param = name_pattern "param" cases in
+    let let_ =
+      { bop_op_name = slet.pbop_op;
+        bop_op_path = op_path;
+        bop_op_val = op_desc;
+        bop_op_type = op_type;
+        bop_exp = exp;
+        bop_loc = slet.pbop_loc; }
+    in
+    let desc =
+      Texp_letop{let_; ands; param; body; partial}
+    in
+    rue { exp_desc = desc;
+          exp_loc = sexp.pexp_loc;
+          exp_extra = [];
+          exp_type = instance env ty_result;
+          exp_env = env;
+          exp_attributes = sexp.pexp_attributes; }
+
   | Pexp_extension ({ txt = ("ocaml.extension_constructor"
                              |"extension_constructor"); _ },
                     payload) ->
@@ -2774,6 +2827,39 @@ and type_expect_ ?in_function ?(recarg=Rejected) env sexp ty_expected =
            exp_type = instance env ty_expected;
            exp_attributes = sexp.pexp_attributes;
            exp_env = env }
+
+and type_ident env ?(recarg=Rejected) lid =
+  let (path, desc) = Typetexp.find_value env lid.loc lid.txt in
+  if !Clflags.annotations then begin
+    let dloc = desc.Types.val_loc in
+    let annot =
+      if dloc.Location.loc_ghost then Annot.Iref_external
+      else Annot.Iref_internal dloc
+    in
+    let name = Path.name ~paren:Oprint.parenthesized_ident path in
+    Stypes.record (Stypes.An_ident (lid.loc, name, annot))
+  end;
+  let is_recarg =
+    match (repr desc.val_type).desc with
+    | Tconstr(p, _, _) -> Path.is_constructor_typath p
+    | _ -> false
+  in
+  begin match is_recarg, recarg, (repr desc.val_type).desc with
+  | _, Allowed, _
+  | true, Required, _
+  | false, Rejected, _ -> ()
+  | true, Rejected, _
+  | false, Required, (Tvar _ | Tconstr _) ->
+      raise (Error (lid.loc, env, Inlined_record_escape))
+  | false, Required, _  -> () (* will fail later *)
+  end;
+  path, desc
+
+and type_binding_op_ident env s =
+  let loc = s.loc in
+  let lid = Location.mkloc (Longident.Lident s.txt) loc in
+  let path, desc = type_ident env lid in
+  path, desc
 
 and type_function ?in_function loc attrs env ty_expected l caselist =
   let (loc_fun, ty_fun) =
@@ -3592,6 +3678,48 @@ and type_let ?(check = fun s -> Warnings.Unused_var s)
       l;
   (l, new_env, unpacks)
 
+and type_andops env sarg sands expected_ty =
+  let rec loop env let_sarg rev_sands expected_ty =
+    match rev_sands with
+    | [] -> type_expect env let_sarg expected_ty, []
+    | { pbop_op = sop; pbop_exp = sexp; pbop_loc = loc; _ } :: rest ->
+        begin_def ();
+        let op_path, op_desc = type_binding_op_ident env sop in
+        let op_type = instance env op_desc.val_type in
+        let ty_arg = newvar () in
+        let ty_rest = newvar () in
+        let ty_result = newvar() in
+        let ty_rest_fun = newty (Tarrow(Nolabel, ty_arg, ty_result, Cok)) in
+        let ty_op = newty (Tarrow(Nolabel, ty_rest, ty_rest_fun, Cok)) in
+        begin try
+          unify env op_type ty_op
+        with Unify trace ->
+          raise(Error(sop.loc, env, Andop_type_clash (sop.txt, trace)))
+        end;
+        end_def ();
+        generalize_structure ty_rest;
+        generalize_structure ty_arg;
+        generalize_structure ty_result;
+        let let_arg, rest = loop env let_sarg rest ty_rest in
+        let exp = type_expect env sexp ty_arg in
+        begin try
+          unify env (instance env ty_result) (instance env expected_ty)
+        with Unify trace ->
+          raise(Error(loc, env, Bindings_type_clash trace))
+        end;
+        let andop =
+          { bop_op_name = sop;
+            bop_op_path = op_path;
+            bop_op_val = op_desc;
+            bop_op_type = op_type;
+            bop_exp = exp;
+            bop_loc = loc }
+        in
+        let_arg, andop :: rest
+  in
+  let let_arg, rev_ands = loop env sarg (List.rev sands) expected_ty in
+  let_arg, List.rev rev_ands
+
 (* Typing of toplevel bindings *)
 
 let type_binding env rec_flag spat_sexp_list scope =
@@ -3888,6 +4016,24 @@ let report_error env ppf = function
     fprintf ppf
     "Field @{<info>%s@} is not optional in type %a. Use without ?" name
     type_expr typ
+  | Letop_type_clash (name, trace) ->
+      report_unification_error ppf env trace
+        (function ppf ->
+          fprintf ppf "The operator %s has type" name)
+        (function ppf ->
+          fprintf ppf "but it was expected to have type")
+  | Andop_type_clash (name, trace) ->
+      report_unification_error ppf env trace
+        (function ppf ->
+          fprintf ppf "The operator %s has type" name)
+        (function ppf ->
+          fprintf ppf "but it was expected to have type")
+  | Bindings_type_clash trace ->
+      report_unification_error ppf env trace
+        (function ppf ->
+          fprintf ppf "These bindings have type")
+        (function ppf ->
+          fprintf ppf "but bindings were expected of type")
 
 
 let super_report_error_no_wrap_printing_env = report_error

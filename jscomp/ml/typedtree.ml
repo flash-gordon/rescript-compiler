@@ -112,6 +112,13 @@ and expression_desc =
   | Texp_lazy of expression
   | Texp_object of unit
   | Texp_pack of module_expr
+  | Texp_letop of {
+      let_ : binding_op;
+      ands : binding_op list;
+      param : Ident.t;
+      body : case;
+      partial : partial;
+    }
   | Texp_unreachable
   | Texp_extension_constructor of Longident.t loc * Path.t
 
@@ -128,6 +135,16 @@ and case =
 and record_label_definition =
   | Kept of Types.type_expr
   | Overridden of Longident.t loc * expression
+
+and binding_op =
+  {
+    bop_op_path : Path.t;
+    bop_op_name : string loc;
+    bop_op_val : Types.value_description;
+    bop_op_type : Types.type_expr;
+    bop_exp : expression;
+    bop_loc : Location.t;
+  }
 
 (* Value expressions for the class language *)
 

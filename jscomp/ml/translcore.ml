@@ -679,6 +679,14 @@ let rec cut n l =
 
 (* Translation of expressions *)
 
+
+let transl_ident loc env ty path desc =
+  match desc.val_kind with
+  | Val_prim p ->
+      transl_primitive loc p env ty
+  | Val_reg ->
+      transl_value_path ~loc env path
+
 let try_ids = Hashtbl.create 8
 
 let rec transl_exp e =
@@ -933,6 +941,8 @@ and transl_exp0 (e : Typedtree.expression) : Lambda.lambda =
          do *)
       Lprim (Pmakeblock Blk_lazy_general, [ transl_exp e ], e.exp_loc)
   | Texp_object () -> assert false
+  | Texp_letop{let_; ands; param; body; partial} ->
+    (transl_letop e.exp_loc e.exp_env let_ ands param body partial)
   | Texp_unreachable -> raise (Error (e.exp_loc, Unreachable_reached))
 
 and transl_list expr_list = List.map transl_exp expr_list
@@ -1262,6 +1272,42 @@ and transl_match e arg pat_expr_list exn_pat_expr_list partial =
       let val_id = Typecore.name_pattern "val" pat_expr_list in
       static_catch [ transl_exp arg ] [ val_id ]
         (Matching.for_function e.exp_loc None (Lvar val_id) cases partial)
+
+and transl_letop loc env let_ ands param case partial =
+  let rec loop prev_lam = function
+    | [] -> prev_lam
+    | and_ :: rest ->
+        let left_id = Ident.create "left" in
+        let right_id = Ident.create "right" in
+        let op =
+          transl_ident and_.bop_op_name.loc env
+            and_.bop_op_type and_.bop_op_path and_.bop_op_val
+        in
+        let exp = transl_exp and_.bop_exp in
+        let lam =
+          bind Strict right_id exp
+            (Lapply{ap_loc = and_.bop_loc;
+                    ap_func = op;
+                    ap_args=[Lvar left_id; Lvar right_id];
+                    ap_inlined=Default_inline})
+        in
+        bind Strict left_id prev_lam (loop lam rest)
+  in
+  let op =
+    transl_ident let_.bop_op_name.loc env
+      let_.bop_op_type let_.bop_op_path let_.bop_op_val
+  in
+  let exp = loop (transl_exp let_.bop_exp) ands in
+  let func =
+    let params, body, _ = transl_function case.c_rhs.exp_loc partial param [case] in
+    let attr = default_function_attribute in
+    let loc = case.c_rhs.exp_loc in
+    Lfunction{params; body; attr; loc}
+  in
+  Lapply{ap_loc = loc;
+         ap_func = op;
+         ap_args=[exp; func];
+         ap_inlined=Default_inline}
 
 open Format
 

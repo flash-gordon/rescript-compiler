@@ -287,6 +287,9 @@ let mklbs ext rf lb =
     lbs_extension = ext ;
     lbs_loc = symbol_rloc (); }
 
+let mkletopb pbop_op pbop_pat pbop_exp =
+  {pbop_op; pbop_pat; pbop_exp; pbop_loc = symbol_rloc ()}
+
 let addlb lbs lb =
   { lbs with lbs_bindings = lb :: lbs.lbs_bindings }
 
@@ -408,6 +411,8 @@ let package_type_of_module_type pmty =
 %token <string> INFIXOP3
 %token <string> INFIXOP4
 %token <string> DOTOP
+%token <string> LETOP
+%token <string> ANDOP
 %token INHERIT
 %token INITIALIZER
 %token <string * char option> INT
@@ -1104,6 +1109,12 @@ expr:
       { mkexp(Pexp_apply($1, List.rev $2)) }
   | let_bindings IN seq_expr
       { expr_of_let_bindings $1 $3 }
+  | LETOP letop_bindings IN seq_expr
+      { let (pbop_pat, pbop_exp, rev_ands) = $2 in
+        let ands = List.rev rev_ands in
+        let op = mkrhs $1 1 in
+        let let_ = mkletopb op pbop_pat pbop_exp in
+        mkexp (Pexp_letop(let_, ands, $4)) }
   | LET MODULE ext_attributes UIDENT module_binding_body IN seq_expr
       { mkexp_attrs (Pexp_letmodule(mkrhs $4 4, $5, $7)) $3 }
   | LET EXCEPTION ext_attributes let_exception_declaration IN seq_expr
@@ -2184,6 +2195,8 @@ operator:
   | INFIXOP2                                    { $1 }
   | INFIXOP3                                    { $1 }
   | INFIXOP4                                    { $1 }
+  | LETOP                                       { $1 }
+  | ANDOP                                       { $1 }
   | DOTOP LPAREN RPAREN                         { "."^ $1 ^"()" }
   | DOTOP LPAREN RPAREN LESSMINUS               { "."^ $1 ^ "()<-" }
   | DOTOP LBRACKET RBRACKET                     { "."^ $1 ^"[]" }
@@ -2415,5 +2428,24 @@ payload:
   | COLON core_type { PTyp $2 }
   | QUESTION pattern { PPat ($2, None) }
   | QUESTION pattern WHEN seq_expr { PPat ($2, Some $4) }
+;
+letop_binding_body:
+    val_ident strict_binding
+      { (mkpatvar $1 1, $2) }
+  | simple_pattern COLON core_type EQUAL seq_expr
+      { (ghpat (Ppat_constraint($1, $3)), $5) }
+  | pattern_no_exn EQUAL seq_expr
+      { ($1, $3) }
+;
+letop_bindings:
+    letop_binding_body
+      { let let_pat, let_exp = $1 in
+        let_pat, let_exp, [] }
+  | letop_bindings ANDOP let_binding_body
+      { let let_pat, let_exp, rev_ands = $1 in
+        let pbop_pat, pbop_exp = $3 in
+        let op = mkrhs $2 2 in
+        let and_ = mkletopb op pbop_pat pbop_exp in
+        let_pat, let_exp, and_ :: rev_ands }
 ;
 %%

@@ -20,6 +20,7 @@ open Typedtree
 
 type mapper =
   {
+    binding_op: mapper -> binding_op -> binding_op;
     case: mapper -> case -> case;
     cases: mapper -> case list -> case list;
     class_description: mapper -> class_description -> class_description;

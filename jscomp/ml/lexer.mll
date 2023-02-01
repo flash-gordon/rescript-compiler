@@ -286,6 +286,9 @@ let symbolchar =
   ['!' '$' '%' '&' '*' '+' '-' '.' '/' ':' '<' '=' '>' '?' '@' '^' '|' '~']
 let dotsymbolchar =
   ['!' '$' '%' '&' '*' '+' '-' '/' ':' '=' '>' '?' '@' '^' '|' '~']
+let kwdopchar =
+  ['$' '&' '*' '+' '-' '/' '<' '=' '>' '@' '^' '|']
+
 let decimal_literal =
   ['0'-'9'] ['0'-'9' '_']*
 let hex_digit =
@@ -507,6 +510,10 @@ rule token = parse
             { INFIXOP3(Lexing.lexeme lexbuf) }
   | '#' (symbolchar | '#') +
             { HASHOP(Lexing.lexeme lexbuf) }
+  | "let" kwdopchar dotsymbolchar * as op
+            { LETOP op }
+  | "and" kwdopchar dotsymbolchar * as op
+            { ANDOP op }
   | eof { Rescript_cpp.eof_check lexbuf; EOF}
   | _
       { raise (Error(Illegal_character (Lexing.lexeme_char lexbuf 0),

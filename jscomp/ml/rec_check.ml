@@ -197,7 +197,7 @@ let rec classify_expression : Typedtree.expression -> sd =
   | Texp_apply ({ exp_desc = Texp_ident (_, _, vd) }, _) when is_ref vd ->
       Static
   | Texp_apply _ | Texp_match _ | Texp_ifthenelse _ | Texp_send _ | Texp_field _
-  | Texp_assert _ | Texp_try _ | Texp_override _ ->
+  | Texp_assert _ | Texp_try _ | Texp_override _ | Texp_letop _ ->
       Dynamic
 
 let rec expression : Env.env -> Typedtree.expression -> Use.t =
@@ -296,8 +296,16 @@ let rec expression : Env.env -> Typedtree.expression -> Use.t =
       match Typeopt.classify_lazy_argument e with
       | `Constant_or_function | `Identifier _ | `Float -> expression env e
       | `Other -> Use.delay (expression env e))
+  | Texp_letop{let_; ands; body; _} ->
+      Use.(join
+        (list binding_op env (let_ :: ands))
+        (delay (case ~scrutinee:Use.empty env body)))
   | Texp_unreachable -> Use.empty
   | Texp_extension_constructor _ -> Use.empty
+
+and binding_op : Env.env -> Typedtree.binding_op -> Use.t =
+  fun env bop ->
+    Use.join (path env bop.bop_op_path) (expression env bop.bop_exp)
 
 and option : 'a. (Env.env -> 'a -> Use.t) -> Env.env -> 'a option -> Use.t =
  fun f env -> Misc.Stdlib.Option.value_default (f env) ~default:Use.empty

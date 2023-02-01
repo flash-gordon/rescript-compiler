@@ -546,6 +546,14 @@ module SexpAst = struct
             Sexp.list (mapEmpty ~f:valueBinding vbs);
             expression expr;
           ]
+    | Pexp_letop (let_, ands, body) ->
+        Sexp.list
+          [
+            Sexp.atom "Pexp_letop";
+            Sexp.list [Sexp.atom "let_"; bindingOp let_];
+            Sexp.list [Sexp.atom "ands"; Sexp.list (mapEmpty ~f:bindingOp ands)];
+            Sexp.list [Sexp.atom "body"; expression body];
+          ]
       | Pexp_function cases ->
         Sexp.list
           [Sexp.atom "Pexp_function"; Sexp.list (mapEmpty ~f:case cases)]
@@ -919,6 +927,17 @@ module SexpAst = struct
   and attributes attrs =
     let sexprs = mapEmpty ~f:attribute attrs in
     Sexp.list (Sexp.atom "attributes" :: sexprs)
+
+  and bindingOp (op : binding_op) =
+    Sexp.list
+      [
+        Sexp.atom "pbop_op";
+        Sexp.atom op.pbop_op.txt;
+        Sexp.atom "pvb_pat";
+        pattern op.pbop_pat;
+        Sexp.atom "pvb_expr";
+        expression op.pbop_exp;
+      ]
 
   let printEngine =
     Res_driver.

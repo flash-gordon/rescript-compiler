@@ -36,6 +36,20 @@ let infix_symbols = [ '='; '<'; '>'; '@'; '^'; '|'; '&'; '+'; '-'; '*'; '/';
 let special_infix_strings =
   ["asr"; "land"; "lor"; "lsl"; "lsr"; "lxor"; "mod"; "or"; ":="; "!="; "::" ]
 
+let letop s =
+  String.length s > 3
+  && s.[0] = 'l'
+  && s.[1] = 'e'
+  && s.[2] = 't'
+  && List.mem s.[3] infix_symbols
+
+let andop s =
+  String.length s > 3
+  && s.[0] = 'a'
+  && s.[1] = 'n'
+  && s.[2] = 'd'
+  && List.mem s.[3] infix_symbols
+
 (* determines if the string is an infix string.
    checks backwards, first allowing a renaming postfix ("_102") which
    may have resulted from Pexp -> Texp -> Pexp translation, then checking
@@ -46,6 +60,8 @@ let fixity_of_string  = function
   | s when List.mem s.[0] infix_symbols -> `Infix s
   | s when List.mem s.[0] prefix_symbols -> `Prefix s
   | s when s.[0] = '.' -> `Mixfix s
+  | s when letop s -> `Letop s
+  | s when andop s -> `Andop s
   | _ -> `Normal
 
 let view_fixity_of_exp = function
@@ -55,12 +71,14 @@ let view_fixity_of_exp = function
 
 let is_infix  = function  | `Infix _ -> true | _  -> false
 let is_mixfix = function `Mixfix _ -> true | _ -> false
+let is_kwdop = function `Letop _ | `Andop _ -> true | _ -> false
 
 (* which identifiers are in fact operators needing parentheses *)
 let needs_parens txt =
   let fix = fixity_of_string txt in
   is_infix fix
   || is_mixfix fix
+  || is_kwdop fix
   || List.mem txt.[0] prefix_symbols
 
 (* some infixes need spaces around parens to avoid clashes with comment
@@ -548,7 +566,8 @@ and expression ctxt f x =
         paren true (expression reset_ctxt) f x
     | Pexp_ifthenelse _ | Pexp_sequence _ when ctxt.ifthenelse ->
         paren true (expression reset_ctxt) f x
-    | Pexp_let _ | Pexp_letmodule _ | Pexp_open _ | Pexp_letexception _
+    | Pexp_let _ | Pexp_letmodule _ | Pexp_open _
+      | Pexp_letexception _ | Pexp_letop _
         when ctxt.semi ->
         paren true (expression reset_ctxt) f x
     | Pexp_fun (l, e0, p, e) ->
@@ -673,6 +692,11 @@ and expression ctxt f x =
           (expression ctxt) e
     | Pexp_variant (l,Some eo) ->
         pp f "@[<2>`%s@;%a@]" l (simple_expr ctxt) eo
+    | Pexp_letop (let_, ands, body) ->
+        pp f "@[<2>@[<v>%a@,%a@] in@;<1 -2>%a@]"
+          (binding_op ctxt) let_
+          (list ~sep:"@," (binding_op ctxt)) ands
+          (expression ctxt) body
     | Pexp_extension e -> extension ctxt f e
     | Pexp_unreachable -> pp f "."
     | _ -> expression1 ctxt f x
@@ -1168,6 +1192,10 @@ and bindings ctxt f (rf,l) =
       pp f "@[<v>%a@,%a@]"
         (binding "let" rf) x
         (list ~sep:"@," (binding "and" Nonrecursive)) xs
+
+and binding_op ctxt f x =
+  pp f "@[<2>%s %a@;=@;%a@]"
+    x.pbop_op.txt (pattern ctxt) x.pbop_pat (expression ctxt) x.pbop_exp
 
 and structure_item ctxt f x =
   match x.pstr_desc with

@@ -347,6 +347,7 @@ and expression_desc =
            (module ME : S) is represented as
            Pexp_constraint(Pexp_pack, Ptyp_package S) *)
   | Pexp_open of override_flag * Longident.t loc * expression
+  | Pexp_letop of binding_op * binding_op list * expression
         (* M.(E)
            let open M in E
            let! open M in E *)
@@ -360,6 +361,14 @@ and case =   (* (P -> E) or (P when E0 -> E) *)
      pc_lhs: pattern;
      pc_guard: expression option;
      pc_rhs: expression;
+    }
+
+and binding_op =
+    {
+      pbop_op : string loc;
+      pbop_pat : pattern;
+      pbop_exp : expression;
+      pbop_loc : Location.t;
     }
 
 (* Value descriptions *)

@@ -3199,7 +3199,8 @@ and printExpression ~state (e : Parsetree.expression) cmtTbl =
              Doc.rparen;
            ])
     | Pexp_sequence _ -> printExpressionBlock ~state ~braces:true e cmtTbl
-    | Pexp_let _ -> printExpressionBlock ~state ~braces:true e cmtTbl
+    | Pexp_let _ | Pexp_letop _ ->
+      printExpressionBlock ~state ~braces:true e cmtTbl
     | Pexp_try (expr, cases) ->
       let exprDoc =
         let doc = printExpressionWithComments ~state expr cmtTbl in
@@ -3328,7 +3329,7 @@ and printPexpFun ~state ~inCallback e cmtTbl =
   let returnShouldIndent =
     match returnExpr.pexp_desc with
     | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _
-    | Pexp_open _ ->
+    | Pexp_letop _ | Pexp_open _ ->
       false
     | _ -> true
   in
