@@ -29,7 +29,6 @@
     "bsc",
     "rescript",
     "darwin",
-    "darwinarm64",
     "linux",
     "win32",
     "docs/docson/build-schema.json",

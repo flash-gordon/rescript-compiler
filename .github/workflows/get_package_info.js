@@ -11,7 +11,7 @@ const rescriptPackagePath = `${name}-${version}.tgz`;
 const rescriptArtifactName = `${name}-${version}-${commitHashShort}.tgz`;
 
 const stdlibPackagePath = `packages/std/rescript-std-${version}.tgz`;
-const stdlibArtifactName = `rescript-std-${version}-${commitHashShort}.tgz`;
+const stdlibArtifactName = `rescript-letop-std-${version}-${commitHashShort}.tgz`;
 
 fs.renameSync(rescriptPackagePath, rescriptArtifactName);
 fs.renameSync(stdlibPackagePath, stdlibArtifactName);
