@@ -1,5 +1,5 @@
 {
-  "name": "rescript",
+  "name": "rescript-letop",
   "version": "11.0.0-alpha.1",
   "devDependencies": {
     "mocha": "^10.1.0",
